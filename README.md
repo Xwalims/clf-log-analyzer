@@ -15,18 +15,12 @@ statistics, and renders the result as a fixed-width text report or JSON.
 
 - [What it is](#what-it-is)
 - [Why](#why)
-- [Install](#install)
 - [Usage](#usage)
   - [Default text report](#default-text-report)
   - [JSON for pipelines](#json-for-pipelines)
-  - [Bar charts instead of a sparkline](#bar-charts-instead-of-a-sparkline)
   - [Strict mode in a monitoring pipeline](#strict-mode-in-a-monitoring-pipeline)
   - [Gzip logs](#gzip-logs)
 - [Supported formats](#supported-formats)
-- [Supported flags](#supported-flags)
-  - [Exit codes](#exit-codes)
-- [Library API](#library-api)
-- [How the tests run](#how-the-tests-run)
 - [License](#license)
 
 <!-- /hero -->
