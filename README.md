@@ -4,6 +4,33 @@ A dependency-free analyzer for Apache and nginx access logs. It parses Common
 Log Format and Combined Log Format, aggregates the traffic into deterministic
 statistics, and renders the result as a fixed-width text report or JSON.
 
+<!-- hero -->
+
+[![CI](https://github.com/clf-log-analyzer/actions/workflows/ci.yml/badge.svg)](https://github.com/clf-log-analyzer/actions/workflows/ci.yml)
+![python 3.11 – 3.13](https://img.shields.io/badge/python-3.11–3.13-blue)
+![MIT](https://img.shields.io/badge/license-MIT-blue.svg)
+![dependencies](https://img.shields.io/badge/dependencies-none-2f6f4f)
+
+## Contents
+
+- [What it is](#what-it-is)
+- [Why](#why)
+- [Install](#install)
+- [Usage](#usage)
+  - [Default text report](#default-text-report)
+  - [JSON for pipelines](#json-for-pipelines)
+  - [Bar charts instead of a sparkline](#bar-charts-instead-of-a-sparkline)
+  - [Strict mode in a monitoring pipeline](#strict-mode-in-a-monitoring-pipeline)
+  - [Gzip logs](#gzip-logs)
+- [Supported formats](#supported-formats)
+- [Supported flags](#supported-flags)
+  - [Exit codes](#exit-codes)
+- [Library API](#library-api)
+- [How the tests run](#how-the-tests-run)
+- [License](#license)
+
+<!-- /hero -->
+
 ## What it is
 
 Given an access log, it answers the questions you actually have after an
