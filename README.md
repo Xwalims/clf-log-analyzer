@@ -63,7 +63,7 @@ Design choices worth stating up front:
 There is nothing to install. Clone and run:
 
 ```bash
-git clone https://github.com/xwellames/clf-log-analyzer.git
+git clone https://github.com/Xwalims/clf-log-analyzer.git
 cd clf-log-analyzer
 python3 -m clf_log_analyzer.cli --help
 ```
