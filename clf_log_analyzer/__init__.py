@@ -51,7 +51,26 @@ from .parser import (
     parse_line,
     parse_lines,
 )
-from .cli import build_parser, main
+
+# ``build_parser``/``main`` stay importable from the package root, but are
+# resolved lazily: importing ``clf_log_analyzer.cli`` eagerly would make
+# ``python3 -m clf_log_analyzer.cli`` load the module twice and emit a
+# RuntimeWarning about it already being present in sys.modules.
+_CLI_EXPORTS = frozenset({"build_parser", "main"})
+
+
+def __getattr__(name: str) -> object:
+    """Import the CLI submodule on first attribute access."""
+    if name in _CLI_EXPORTS:
+        from . import cli
+
+        return getattr(cli, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    """List the package namespace, including the lazily loaded CLI names."""
+    return sorted(set(globals()) | _CLI_EXPORTS)
 
 __all__ = [
     "__version__",
