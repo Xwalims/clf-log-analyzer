@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clf-log-analyzer"
+version = "0.1.0"
+description = "Dependency-free analyzer for Apache/nginx access logs (Common and Combined Log Format)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+keywords = ["logs", "access-log", "apache", "nginx", "clf", "analysis"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Logging",
+    "Topic :: Utilities",
+]
+dependencies = []
+
+[project.scripts]
+clf-log-analyzer = "clf_log_analyzer.cli:main"
+
+[tool.setuptools]
+packages = ["clf_log_analyzer"]
+
+[tool.setuptools.package-data]
+clf_log_analyzer = ["py.typed"]
