@@ -7,13 +7,17 @@ documented exit-code contract is verified rather than assumed.
 
 from __future__ import annotations
 
+import contextlib
 import gzip
+import io
 import json
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+from clf_log_analyzer.cli import build_parser, main
 
 from .fixtures import SAMPLE_LOG, write_sample_log
 
@@ -177,26 +181,40 @@ class CliEndToEndTests(unittest.TestCase):
 
 
 class CliInProcessTests(unittest.TestCase):
-    """Direct calls to main() so return codes can be asserted without a fork."""
+    """Direct calls to main() so return codes can be asserted without a fork.
+
+    stdout and stderr are captured: main() prints its report, and the suite's
+    own output should stay readable.
+    """
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.log = write_sample_log(Path(self.tmp.name) / "access.log")
 
-    def test_main_returns_zero_on_success(self) -> None:
-        from clf_log_analyzer.cli import main
+    def _run(self, argv: list[str]) -> tuple[int, str, str]:
+        """Run main() with streams captured, returning ``(code, out, err)``."""
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = main(argv)
+        return code, out.getvalue(), err.getvalue()
 
-        self.assertEqual(main([str(self.log), "--chart", "none"]), 0)
+    def test_main_returns_zero_on_success(self) -> None:
+        code, out, _ = self._run([str(self.log), "--chart", "none"])
+        self.assertEqual(code, 0)
+        self.assertIn("Requests", out)
 
     def test_main_returns_two_on_missing_file(self) -> None:
-        from clf_log_analyzer.cli import main
+        code, _, err = self._run([str(Path(self.tmp.name) / "absent.log")])
+        self.assertEqual(code, 2)
+        self.assertIn("no such file", err)
 
-        self.assertEqual(main([str(Path(self.tmp.name) / "absent.log")]), 2)
+    def test_main_returns_one_under_strict_with_bad_lines(self) -> None:
+        code, _, err = self._run([str(self.log), "--strict"])
+        self.assertEqual(code, 1)
+        self.assertIn("malformed line", err)
 
     def test_parser_defaults_are_documented(self) -> None:
-        from clf_log_analyzer.cli import build_parser
-
         args = build_parser().parse_args(["x.log"])
         self.assertEqual(args.log_format, "auto")
         self.assertEqual(args.chart, "sparkline")
