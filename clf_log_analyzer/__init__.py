@@ -41,6 +41,7 @@ from .parser import (
     FORMAT_COMMON,
     Entry,
     MalformedLineError,
+    MAX_OFFSET_MINUTES,
     ParseError,
     ParseResult,
     detect_format,

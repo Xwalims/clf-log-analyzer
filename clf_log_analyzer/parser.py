@@ -34,6 +34,7 @@ __all__ = [
     "FORMAT_COMMON",
     "FORMAT_COMBINED",
     "MONTHS",
+    "MAX_OFFSET_MINUTES",
     "detect_format",
     "parse_line",
     "parse_lines",
@@ -266,6 +267,23 @@ def _optional(value: str) -> str | None:
     return value
 
 
+#: ``datetime.timezone`` refuses any offset of exactly 24 hours, so a CLF
+#: ``+2400`` offset has to be rejected here rather than handed to it.  The
+#: widest real-world offset is +1400; anything past +2300 is a corrupt log.
+MAX_OFFSET_MINUTES = 23 * 60 + 59
+
+
+def _decimal(token: str) -> bool:
+    """Return ``True`` when *token* is one or more base-10 digits.
+
+    ``str.isdigit`` is the wrong guard: it also accepts superscripts, circled
+    digits and other numeric-looking characters that ``int()`` then refuses to
+    convert, which turned a malformed line into an unhandled ``ValueError``.
+    ``str.isdecimal`` is exactly the set ``int()`` accepts.
+    """
+    return token.isdecimal()
+
+
 def parse_timestamp(field_text: str) -> datetime:
     """Parse ``10/Oct/2000:13:55:36 -0700`` into a timezone-aware datetime.
 
@@ -287,22 +305,22 @@ def parse_timestamp(field_text: str) -> datetime:
     year, _, rest3 = rest2.partition(":")
     hour, _, rest4 = rest3.partition(":")
     minute, _, second = rest4.partition(":")
-    if not (day.isdigit() and year.isdigit()):
+    if not (_decimal(day) and _decimal(year)):
         raise MalformedLineError(f"unrecognised timestamp {field_text!r}")
     month = MONTHS.get(month_name.strip().lower())
     if month is None:
         raise MalformedLineError(f"unknown month in timestamp {field_text!r}")
-    if not (hour.isdigit() and minute.isdigit() and second.isdigit()):
+    if not (_decimal(hour) and _decimal(minute) and _decimal(second)):
         raise MalformedLineError(f"unrecognised timestamp {field_text!r}")
     tzinfo = timezone.utc
     if offset_part:
         sign, digits = offset_part[0], offset_part[1:].replace(":", "")
-        if sign not in "+-" or not digits.isdigit() or len(digits) not in (2, 4):
+        if sign not in "+-" or not _decimal(digits) or len(digits) not in (2, 4):
             raise MalformedLineError(f"unrecognised UTC offset {offset_part!r}")
         if len(digits) == 2:
             digits += "00"
         minutes = int(digits[:2]) * 60 + int(digits[2:])
-        if minutes > 24 * 60:
+        if minutes > MAX_OFFSET_MINUTES:
             raise MalformedLineError(f"unrecognised UTC offset {offset_part!r}")
         delta = timedelta(minutes=minutes)
         tzinfo = timezone(-delta if sign == "-" else delta)
@@ -338,7 +356,7 @@ def parse_size(token: str) -> int | None:
     """
     if token == MISSING:
         return None
-    if not token.isdigit():
+    if not _decimal(token):
         raise MalformedLineError(f"size {token!r} is not a number")
     return int(token)
 
@@ -349,7 +367,7 @@ def parse_status(token: str) -> int:
     Raises:
         MalformedLineError: If the token is not a three-digit code.
     """
-    if not token.isdigit() or len(token) != 3:
+    if not _decimal(token) or len(token) != 3:
         raise MalformedLineError(f"status {token!r} is not a three-digit code")
     return int(token)
 

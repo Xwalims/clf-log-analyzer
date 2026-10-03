@@ -8,6 +8,7 @@ timestamps and gzip-transparent file reading.
 from __future__ import annotations
 
 import gzip
+import random
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -18,6 +19,7 @@ from clf_log_analyzer.parser import (
     FORMAT_COMMON,
     Entry,
     MalformedLineError,
+    MAX_OFFSET_MINUTES,
     ParseError,
     clean_host,
     detect_format,
@@ -360,6 +362,205 @@ class FileReadingTests(unittest.TestCase):
         result = parse_file(self.path)
         self.assertEqual(len(result.entries), 1)
         self.assertEqual(len(result.errors), 1)
+
+
+class NonDecimalDigitTests(unittest.TestCase):
+    """Numeric-looking characters that ``int()`` rejects are malformed lines.
+
+    ``str.isdigit()`` is true for superscripts, circled digits and the other
+    numeric-number characters, but ``int()`` refuses them.  Guarding with
+    ``isdigit()`` therefore turned a corrupt log line into an unhandled
+    ``ValueError`` that aborted the whole analysis, which is exactly what this
+    tool promises never to do.
+    """
+
+    #: One representative of every block of Unicode characters for which
+    #: ``isdigit()`` is true but ``int()`` raises -- 128 codepoints in ten
+    #: blocks.  Escapes rather than literals so the file stays pure ASCII.
+    LIARS = [
+        "\U000000b2",  # superscript two
+        "\U00001369",  # Ethiopic digit one
+        "\U000019da",  # New Tai Lue digit five
+        "\U00002070",  # superscript zero
+        "\U00002460",  # circled digit one
+        "\U00002776",  # dingbat negative circled digit one
+        "\U00010a40",  # Kharoshthi digit one
+        "\U00010e60",  # Rumi digit one
+        "\U00011052",  # Brahmi digit one
+        "\U0001f100",  # digit zero full stop
+    ]
+
+    def line_with(self, field: str, token: str) -> str:
+        """Return a valid line with *token* substituted into *field*."""
+        base = '203.0.113.7 - - [12/Mar/2024:09:15:03 {off}] "GET / HTTP/1.1" {status} {size}'
+        return base.format(off=token if field == "offset" else "+0000",
+                           status=token if field == "status" else "200",
+                           size=token if field == "size" else "512")
+
+    def test_isdigit_is_the_wrong_guard(self) -> None:
+        """The premise: ``isdigit()`` accepts what ``int()`` rejects."""
+        for liar in self.LIARS:
+            with self.subTest(character=liar):
+                self.assertTrue(liar.isdigit())
+                with self.assertRaises(ValueError):
+                    int(liar)
+
+    def test_status_with_non_decimal_digit_is_collected(self) -> None:
+        for liar in self.LIARS:
+            with self.subTest(character=liar):
+                result = parse_lines([self.line_with("status", liar + "00"), COMMON_LINE])
+                self.assertEqual(len(result.entries), 1)
+                self.assertEqual(len(result.errors), 1)
+
+    def test_size_with_non_decimal_digit_is_collected(self) -> None:
+        for liar in self.LIARS:
+            with self.subTest(character=liar):
+                result = parse_lines([self.line_with("size", liar * 3), COMMON_LINE])
+                self.assertEqual(len(result.entries), 1)
+                self.assertEqual(len(result.errors), 1)
+
+    def test_offset_with_non_decimal_digit_is_collected(self) -> None:
+        for liar in self.LIARS:
+            with self.subTest(character=liar):
+                result = parse_lines([self.line_with("offset", "+00" + liar * 2), COMMON_LINE])
+                self.assertEqual(len(result.entries), 1)
+                self.assertEqual(len(result.errors), 1)
+
+    def test_timestamp_with_non_decimal_digit_is_collected(self) -> None:
+        for liar in self.LIARS:
+            with self.subTest(character=liar):
+                line = f'203.0.113.7 - - [{liar * 2}/Mar/2024:09:15:03 +0000] "GET / HTTP/1.1" 200 512'
+                result = parse_lines([line, COMMON_LINE])
+                self.assertEqual(len(result.entries), 1)
+                self.assertEqual(len(result.errors), 1)
+
+    def test_every_liar_is_rejected_by_the_parser_directly(self) -> None:
+        """``parse_line`` itself must raise the library's own error type."""
+        for liar in self.LIARS:
+            for field in ("status", "size", "offset"):
+                with self.subTest(character=liar, field=field):
+                    with self.assertRaises(MalformedLineError):
+                        parse_line(self.line_with(field, liar + "00" if field == "status" else liar * 4))
+
+
+class FullDayOffsetTests(unittest.TestCase):
+    """A 24-hour offset is rejected by ``datetime``, so the parser must not
+    hand it over.
+
+    ``timezone()`` accepts strictly less than 24 hours, so ``+2400`` used to
+    escape as an unhandled ``ValueError`` instead of becoming a malformed line.
+    """
+
+    def test_full_day_offset_is_malformed_not_a_crash(self) -> None:
+        for sign in ("+", "-"):
+            with self.subTest(sign=sign):
+                line = f'203.0.113.7 - - [12/Mar/2024:09:15:03 {sign}2400] "GET / HTTP/1.1" 200 512'
+                result = parse_lines([line, COMMON_LINE])
+                self.assertEqual(len(result.entries), 1)
+                self.assertEqual(len(result.errors), 1)
+                self.assertIn("UTC offset", result.errors[0].message)
+
+    def test_boundary_offset_is_still_accepted(self) -> None:
+        """+2359 is the widest offset Python allows; it must still parse."""
+        entry = parse_line(
+            '203.0.113.7 - - [12/Mar/2024:09:15:03 +2359] "GET / HTTP/1.1" 200 512'
+        )
+        self.assertEqual(entry.timestamp.utcoffset(), timedelta(minutes=1439))
+
+    def test_rejection_boundary_matches_the_construction(self) -> None:
+        """Every offset above the limit fails; every one at or below succeeds."""
+        for minutes in range(0, 24 * 60 + 1, 7):
+            hh, mm = divmod(minutes, 60)
+            token = f"+{hh:02d}{mm:02d}"
+            with self.subTest(offset=token):
+                line = f'203.0.113.7 - - [12/Mar/2024:09:15:03 {token}] "GET / HTTP/1.1" 200 512'
+                if minutes <= MAX_OFFSET_MINUTES:
+                    self.assertEqual(len(parse_lines([line]).entries), 1)
+                else:
+                    self.assertEqual(len(parse_lines([line]).errors), 1)
+
+    def test_const_is_what_the_limit_needs_to_be(self) -> None:
+        self.assertEqual(MAX_OFFSET_MINUTES, 1439)
+        with self.assertRaises(ValueError):
+            timezone(timedelta(minutes=MAX_OFFSET_MINUTES + 1))
+
+
+class NeverFatalFuzzTests(unittest.TestCase):
+    """The headline promise -- a bad line never aborts the analysis -- is
+    property-based.
+
+    ``parse_lines`` only catches :class:`MalformedLineError`, so any other
+    exception escaping a single corrupt line is a real defect: it aborts a
+    multi-gigabyte analysis over one bad byte.  The corpus is generated from a
+    fixed seed so a failure is reproducible.
+    """
+
+    SEED = 20261003
+    #: Deliberately nasty ingredients: every one has crashed something.
+    ALPHABET = (
+        list(' -"[]\\/:\t0123456789') + ["²", "①", "+2400", "-2400", "\x00", "\x7f", "é", "𝟘"]
+    )
+
+    def parse_or_note(self, line: str) -> None:
+        """A line must parse or be collected -- never raise anything else.
+
+        A whitespace-only line is the one documented exception: the parser
+        skips blank lines without counting them, so nothing is expected back.
+        """
+        if not line.strip():
+            self.assertEqual(parse_lines([line]).total_lines, 0)
+            return
+        try:
+            result = parse_lines([line])
+        except MalformedLineError:
+            return  # only parse_lines, never parse_line, may raise this
+        except Exception as exc:  # noqa: BLE001
+            self.fail(f"line {line!r} escaped as {type(exc).__name__}: {exc}")
+        self.assertEqual(
+            len(result.entries) + len(result.errors), 1, f"line {line!r} vanished"
+        )
+
+    def test_random_soup(self) -> None:
+        rng = random.Random(self.SEED)
+        for _ in range(4000):
+            length = rng.randint(0, 90)
+            self.parse_or_note("".join(rng.choice(self.ALPHABET) for _ in range(length)))
+
+    def test_mutations_of_a_real_line(self) -> None:
+        rng = random.Random(self.SEED)
+        for _ in range(4000):
+            chars = list(COMBINED_LINE)
+            for _ in range(rng.randint(1, 4)):
+                index = rng.randrange(len(chars))
+                action = rng.randint(0, 2)
+                if action == 0:
+                    chars[index] = rng.choice(self.ALPHABET)
+                elif action == 1:
+                    del chars[index]
+                else:
+                    chars.insert(index, rng.choice(self.ALPHABET))
+            self.parse_or_note("".join(chars))
+
+    def test_every_whole_hour_offset(self) -> None:
+        """Sweep the offset field across its whole accepted and rejected span."""
+        for sign in ("+", "-"):
+            for hours in range(0, 100):
+                line = f'203.0.113.7 - - [12/Mar/2024:09:15:03 {sign}{hours:02d}00] "GET / HTTP/1.1" 200 512'
+                self.parse_or_note(line)
+
+    def test_a_full_corrupt_file_still_reports_every_line(self) -> None:
+        """A file of nothing but garbage yields one error per line, no crash."""
+        rng = random.Random(self.SEED)
+        garbage = [
+            "".join(rng.choice(self.ALPHABET) for _ in range(rng.randint(1, 60)))
+            for _ in range(500)
+        ]
+        # Blank lines are skipped by design, so drop the whitespace-only ones.
+        garbage = [line for line in garbage if line.strip()]
+        self.assertGreaterEqual(len(garbage), 490)
+        result = parse_lines([*garbage, COMMON_LINE])
+        self.assertEqual(len(result.entries), 1)
+        self.assertEqual(len(result.errors), len(garbage))
 
 
 if __name__ == "__main__":
