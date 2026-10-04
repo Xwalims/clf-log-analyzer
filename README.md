@@ -281,7 +281,13 @@ Also handled:
 
 - A fourth quoted field carrying a request duration in seconds, as written by
   the nginx `$request_time` variable. It is exposed as `Entry.duration` and
-  drives the slowest-request table.
+  drives the slowest-request table. Only finite numbers are accepted: a field
+  of `nan`, `inf` or `1e400` is corrupt data, so it is discarded and `duration`
+  is `None`, exactly as if the field were absent. The request itself is still
+  counted and still contributes its status, size and timing. This matters
+  because `float()` happily accepts all three, and a single surviving `nan`
+  prints as the text `nans` in the report, inverts the min/max duration range
+  and makes `--json` emit a bare `NaN` token that strict JSON parsers reject.
 - IPv6 client addresses, bare (`2001:db8::1`) or in Apache's bracketed form
   (`[2001:db8::1]`), which is unwrapped on parse.
 - `-` for any absent field. A `-` byte count becomes `None`, not `0`, so the
@@ -364,9 +370,9 @@ root:
 python3 -m unittest discover -s tests -t . -v
 ```
 
-Four test modules cover the parser, aggregation, charts and an end-to-end CLI
-that runs the module in a real subprocess against real temporary files. CI
-runs the same command on Python 3.11, 3.12 and 3.13.
+Five test modules cover the parser, aggregation, charts, non-finite duration
+fields and an end-to-end CLI that runs the module in a real subprocess against
+real temporary files. CI runs the same command on Python 3.11, 3.12 and 3.13.
 
 ## License
 

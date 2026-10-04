@@ -19,6 +19,7 @@ An optional further quoted field holding a request duration in seconds
 from __future__ import annotations
 
 import gzip
+import math
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -260,6 +261,24 @@ class _Scanner:
                 self.pos += 1
 
 
+def _duration(token: str) -> float | None:
+    """Return a finite request duration, or ``None`` for anything else.
+
+    ``float()`` accepts ``nan``, ``inf``, ``-inf`` and overflowing literals such
+    as ``1e400``.  Those are not durations, and letting one through poisons every
+    statistic downstream: ``nan`` renders as the text ``nans`` in the report,
+    sorts unpredictably so ``duration=(0.5, 0.25)`` with the low before the high,
+    and ``json.dumps`` emits a bare ``NaN`` token that RFC 8259 parsers reject
+    outright.  A non-finite field is corrupt log data, so it is treated the same
+    way as an unparsable one: recorded as "no duration recorded".
+    """
+    try:
+        value = float(token)
+    except ValueError:
+        return None
+    return value if math.isfinite(value) else None
+
+
 def _optional(value: str) -> str | None:
     """Return ``None`` for the CLF "no value" placeholder, else the value."""
     if value == "" or value == MISSING:
@@ -472,16 +491,10 @@ def parse_line(line: str, log_format: LogFormat = FORMAT_AUTO, line_number: int 
     if len(extras) == 3:
         # A numeric third field is nginx's $request_time; anything else is
         # kept as an unknown extra and simply ignored.
-        try:
-            duration = float(extras[2])
-        except ValueError:
-            duration = None
+        duration = _duration(extras[2])
     elif len(extras) == 1:
         # A lone trailing field can only be a request time.
-        try:
-            duration = float(extras[0])
-        except ValueError:
-            duration = None
+        duration = _duration(extras[0])
 
     method, path, protocol = parse_request(request)
     return Entry(
